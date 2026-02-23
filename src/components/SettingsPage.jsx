@@ -100,7 +100,7 @@ export default function SettingsPage({ settings, setSettings }) {
               return (
                 <div className="path-preview">
                   Серверные моды → <code>{p}{sep}SPT{sep}user{sep}mods{sep}</code><br/>
-                  Клиентские моды → <code>{p}{sep}SPT{sep}BepInEx{sep}plugins{sep}</code>
+                  Клиентские моды → <code>{p}{sep}BepInEx{sep}plugins{sep}</code>
                 </div>
               )
             })()}

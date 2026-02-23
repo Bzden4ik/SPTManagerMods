@@ -1,6 +1,6 @@
 {
   "name": "spt-mod-manager",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "SPT Tarkov Mod Manager",
   "main": "electron/main.js",
   "scripts": {

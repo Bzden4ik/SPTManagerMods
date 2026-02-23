@@ -20,7 +20,7 @@ export default function LibraryPage({ onRemoved, settings }) {
 
   const remove = async (mod) => {
     setRemoving(prev => ({ ...prev, [mod.key]: true }))
-    const res = await window.electronAPI.removeMod({ key: mod.key })
+    const res = await window.electronAPI.removeMod({ key: mod.key, ssh: settings?.ssh })
     if (res.success) {
       setMods(prev => prev.filter(m => m.key !== mod.key))
       if (onRemoved) onRemoved()
@@ -65,8 +65,12 @@ export default function LibraryPage({ onRemoved, settings }) {
                   <span className="lib-date">{mod.installedAt ? new Date(mod.installedAt).toLocaleDateString('ru') : ''}</span>
                 </div>
                 <div className="lib-paths">
-                  {mod.paths?.map((p, i) => (
-                    <span key={i} className="lib-path">{p}</span>
+                  {(mod.pathStatuses || mod.paths?.map(p => ({ path: p, present: true, isSSH: p.startsWith('ssh:') }))).map((s, i) => (
+                    <div key={i} className="lib-path-row">
+                      <span className={`lib-path-status ${s.present ? 'ok' : 'missing'}`}>{s.present ? '✓' : '⚠'}</span>
+                      <span className="lib-path-label">{s.isSSH ? '🌐' : '🖥'}</span>
+                      <span className="lib-path">{s.path}</span>
+                    </div>
                   ))}
                 </div>
               </div>

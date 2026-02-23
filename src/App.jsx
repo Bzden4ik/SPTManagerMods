@@ -3,6 +3,7 @@ import TitleBar from './components/TitleBar.jsx'
 import Sidebar from './components/Sidebar.jsx'
 import ModsPage from './components/ModsPage.jsx'
 import BrowsePage from './components/BrowsePage.jsx'
+import ModpackPage from './components/ModpackPage.jsx'
 import LibraryPage from './components/LibraryPage.jsx'
 import SettingsPage from './components/SettingsPage.jsx'
 import './App.css'
@@ -49,6 +50,7 @@ export default function App() {
           {page === 'mods' && <ModsPage settings={settings} externalQueue={queue} clearExternalQueue={() => setQueue([])} onInstallDone={refreshInstalled} />}
           {page === 'browse' && <BrowsePage settings={settings} onAddToQueue={addToQueue} filters={browseFilters} setFilters={setBrowseFilters} installedMap={installedMap} />}
           {page === 'library' && <LibraryPage settings={settings} onRemoved={refreshInstalled} />}
+          {page === 'modpack' && <ModpackPage settings={settings} onAddToQueue={addToQueue} />}
           {page === 'settings' && <SettingsPage settings={settings} setSettings={setSettings} />}
         </main>
       </div>

@@ -3,9 +3,34 @@ const path = require('path')
 const fs = require('fs')
 const fse = require('fs-extra')
 const os = require('os')
+const zlib = require('zlib')
 const AdmZip = require('adm-zip')
 const { NodeSSH } = require('node-ssh')
 const isDev = !app.isPackaged
+ipcMain.handle('modpack:export', () => {
+  const reg = loadRegistry()
+  const mods = Object.values(reg)
+    .filter(e => e.id) // только Forge моды
+    .map(e => ({ id: e.id, name: e.name, version: e.version, slug: e.slug }))
+  if (!mods.length) return { error: 'Нет установленных Forge модов' }
+  const json = JSON.stringify({ v: 1, mods })
+  const compressed = zlib.deflateSync(Buffer.from(json, 'utf8'))
+  const key = 'SPT-' + compressed.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '')
+  return { key, count: mods.length }
+})
+
+ipcMain.handle('modpack:import', (_, { key }) => {
+  try {
+    const b64 = key.replace(/^SPT-/, '').replace(/-/g, '+').replace(/_/g, '/')
+    const buf = Buffer.from(b64, 'base64')
+    const json = zlib.inflateSync(buf).toString('utf8')
+    const data = JSON.parse(json)
+    if (data.v !== 1 || !Array.isArray(data.mods)) return { error: 'Неверный формат ключа' }
+    return { mods: data.mods }
+  } catch {
+    return { error: 'Не удалось прочитать ключ — возможно он повреждён' }
+  }
+})
 
 // ─── Глобальный перехватчик SSH/сетевых ошибок ─────────────────────────────
 process.on('uncaughtException', (err) => {
@@ -102,10 +127,20 @@ ipcMain.handle('mods:getInstalled', async (_, { ssh } = {}) => {
     if (connected) try { conn.dispose() } catch {}
   }
 
-  return Object.values(reg).map(entry => ({
-    ...entry,
-    isPresent: checkModPaths(entry, sshResults)
-  }))
+  return Object.values(reg).map(entry => {
+    const pathStatuses = (entry.paths || []).map(p => ({
+      path: p,
+      isSSH: p.startsWith('ssh:'),
+      present: p.startsWith('ssh:')
+        ? (p in sshResults ? sshResults[p] : true)
+        : fs.existsSync(p)
+    }))
+    return {
+      ...entry,
+      pathStatuses,
+      isPresent: pathStatuses.some(s => s.present)
+    }
+  })
 })
 
 ipcMain.handle('mods:checkInstalled', (_, { modId }) => {
@@ -116,16 +151,47 @@ ipcMain.handle('mods:checkInstalled', (_, { modId }) => {
   return { installed: checkModPaths(entry), entry }
 })
 
-ipcMain.handle('mods:remove', async (_, { key }) => {
+ipcMain.handle('mods:remove', async (_, { key, ssh }) => {
   const reg = loadRegistry()
   const entry = reg[key]
   if (!entry) return { success: false, error: 'Не найдено в реестре' }
+
   const errors = []
+  let sshConn = null
+
   for (const p of (entry.paths || [])) {
-    try {
-      if (fs.existsSync(p)) fse.removeSync(p)
-    } catch (e) { errors.push(`${p}: ${e.message}`) }
+    if (p.startsWith('ssh:')) {
+      // Формат: ssh:user@host:remotePath
+      const match = p.match(/^ssh:([^@]+)@([^:]+):(.+)$/)
+      if (!match) continue
+      const remotePath = match[3]
+      try {
+        if (!sshConn && ssh?.host) {
+          sshConn = new NodeSSH()
+          const connCfg = { host: ssh.host, port: parseInt(ssh.port) || 22, username: ssh.user, readyTimeout: 8000 }
+          if (ssh.authType === 'key') connCfg.privateKeyPath = ssh.keyPath
+          else connCfg.password = ssh.password
+          await sshConn.connect(connCfg)
+        }
+        if (sshConn) {
+          // Пробуем Windows команду, потом Linux
+          const res = await sshConn.execCommand(`rmdir /s /q "${remotePath}" 2>nul || rm -rf "${remotePath}"`)
+          console.log('[remove ssh]', remotePath, res.stdout, res.stderr)
+        }
+      } catch (e) {
+        errors.push(`SSH ${remotePath}: ${e.message}`)
+      }
+    } else {
+      try {
+        if (fs.existsSync(p)) fse.removeSync(p)
+      } catch (e) {
+        errors.push(`${p}: ${e.message}`)
+      }
+    }
   }
+
+  if (sshConn) try { sshConn.dispose() } catch {}
+
   delete reg[key]
   saveRegistry(reg)
   return { success: errors.length === 0, errors }
@@ -412,8 +478,17 @@ ipcMain.handle('mods:install', async (event, { mods, gamePath, ssh, serverMode }
             const serverRoot = (ssh.serverPath || 'C:\\SPT').replace(/[/\\]$/, '')
             const isWinServer = /^[A-Za-z]:/.test(serverRoot)
             const sep = isWinServer ? '\\' : '/'
-            const remoteBepInEx = serverRoot + sep + 'SPT' + sep + 'BepInEx'
+            const remoteBepInEx = serverRoot + sep + 'BepInEx'
             await uploadDirSSH(sshConn, bepinex, remoteBepInEx, log)
+            // Записываем конкретные плагины залитые на сервер
+            const pluginsDir = path.join(bepinex, 'plugins')
+            if (fs.existsSync(pluginsDir)) {
+              for (const entry of fs.readdirSync(pluginsDir)) {
+                installedPaths.push(`ssh:${ssh.user}@${ssh.host}:${remoteBepInEx}${sep}plugins${sep}${entry}`)
+              }
+            } else {
+              installedPaths.push(`ssh:${ssh.user}@${ssh.host}:${remoteBepInEx}`)
+            }
             log({ type: 'success', text: `BepInEx залит на сервер ✓` })
           } catch (err) {
             log({ type: 'error', text: `SSH ошибка (BepInEx): ${err.message}` })
