@@ -1,0 +1,28 @@
+const { contextBridge, ipcRenderer } = require('electron')
+
+contextBridge.exposeInMainWorld('electronAPI', {
+  minimize: () => ipcRenderer.send('win-minimize'),
+  maximize: () => ipcRenderer.send('win-maximize'),
+  close: () => ipcRenderer.send('win-close'),
+  openFolder: () => ipcRenderer.invoke('dialog:openFolder'),
+  openArchives: () => ipcRenderer.invoke('dialog:openArchives'),
+  installMods: (data) => ipcRenderer.invoke('mods:install', data),
+  getInstalledMods: () => ipcRenderer.invoke('mods:getInstalled'),
+  checkModInstalled: (p) => ipcRenderer.invoke('mods:checkInstalled', p),
+  removeMod: (p) => ipcRenderer.invoke('mods:remove', p),
+  onInstallLog: (cb) => ipcRenderer.on('install:log', (_, msg) => cb(msg)),
+  removeInstallLog: () => ipcRenderer.removeAllListeners('install:log'),
+  // Forge API
+  forgeGetMods: (p) => ipcRenderer.invoke('forge:getMods', p),
+  forgeGetModDetails: (p) => ipcRenderer.invoke('forge:getModDetails', p),
+  forgeGetModVersions: (p) => ipcRenderer.invoke('forge:getModVersions', p),
+  forgeGetDependencies: (p) => ipcRenderer.invoke('forge:getDependencies', p),
+  forgeGetSptVersions: (p) => ipcRenderer.invoke('forge:getSptVersions', p),
+  forgeScrapeFilters: () => ipcRenderer.invoke('forge:scrapeFilters'),
+  forgeDownloadMod: (p) => ipcRenderer.invoke('forge:downloadMod', p),
+  onDownloadProgress: (cb) => ipcRenderer.on('forge:downloadProgress', (_, d) => cb(d)),
+  removeDownloadProgress: () => ipcRenderer.removeAllListeners('forge:downloadProgress'),
+  forgeClearCache: () => ipcRenderer.invoke('forge:clearCache'),
+  onCacheProgress: (cb) => ipcRenderer.on('forge:cacheProgress', (_, d) => cb(d)),
+  removeCacheProgress: () => ipcRenderer.removeAllListeners('forge:cacheProgress'),
+})

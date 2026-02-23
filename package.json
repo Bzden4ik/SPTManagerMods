@@ -1,0 +1,37 @@
+{
+  "name": "spt-mod-manager",
+  "version": "1.0.0",
+  "description": "SPT Tarkov Mod Manager",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 -d 500 && electron .\" --raw",
+    "build": "vite build && electron-builder",
+    "electron": "electron .",
+    "vite": "vite"
+  },
+  "dependencies": {
+    "node-ssh": "^13.2.0",
+    "adm-zip": "^0.5.10",
+    "node-7z": "^3.0.0",
+    "node-unrar-js": "^2.0.0",
+    "fs-extra": "^11.2.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "concurrently": "^9.0.1",
+    "electron": "^32.0.0",
+    "electron-builder": "^25.0.5",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "vite": "^5.4.8",
+    "wait-on": "^8.0.1"
+  },
+  "build": {
+    "appId": "com.spt.modmanager",
+    "productName": "SPT Mod Manager",
+    "files": ["dist/**/*", "electron/**/*"],
+    "win": {
+      "target": "nsis"
+    }
+  }
+}
