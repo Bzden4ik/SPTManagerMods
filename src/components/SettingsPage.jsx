@@ -5,18 +5,18 @@ export default function SettingsPage({ settings, setSettings }) {
   const [ssh, setSsh] = useState(settings.ssh)
   const [gamePath, setGamePath] = useState(settings.gamePath)
   const [forgeToken, setForgeToken] = useState(settings.forgeToken || '')
+  const [sshTest, setSshTest] = useState(null) // null | 'testing' | { ok, msg }
 
-  // Автосохранение при любом изменении
-  useEffect(() => {
-    setSettings({ gamePath, ssh, forgeToken })
-  }, [gamePath, ssh, forgeToken])
+  useEffect(() => { setSettings({ gamePath, ssh, forgeToken }) }, [gamePath, ssh, forgeToken])
 
-  const pickFolder = async () => {
-    const p = await window.electronAPI.openFolder()
-    if (p) setGamePath(p)
-  }
-
+  const pickFolder = async () => { const p = await window.electronAPI.openFolder(); if (p) setGamePath(p) }
   const upd = (k, v) => setSsh(prev => ({ ...prev, [k]: v }))
+
+  const testSSH = async () => {
+    setSshTest('testing')
+    const res = await window.electronAPI.testSSH({ ssh })
+    setSshTest(res.success ? { ok: true, msg: res.info } : { ok: false, msg: res.error })
+  }
 
   return (
     <div className="settings-page">
@@ -92,8 +92,29 @@ export default function SettingsPage({ settings, setSettings }) {
           )}
 
           <div className="input-group">
-            <label>Путь к SPT на сервере</label>
-            <input type="text" value={ssh.serverPath} onChange={e => upd('serverPath', e.target.value)} placeholder="/root/SPT/" />
+            <label>Корневая папка игры на сервере</label>
+            <input type="text" value={ssh.serverPath} onChange={e => upd('serverPath', e.target.value)} placeholder="C:\Hyita" />
+            {ssh.serverPath && (() => {
+              const p = ssh.serverPath.replace(/[/\\]$/, '')
+              const sep = /^[A-Za-z]:/.test(p) ? '\\' : '/'
+              return (
+                <div className="path-preview">
+                  Серверные моды → <code>{p}{sep}SPT{sep}user{sep}mods{sep}</code><br/>
+                  Клиентские моды → <code>{p}{sep}SPT{sep}BepInEx{sep}plugins{sep}</code>
+                </div>
+              )
+            })()}
+          </div>
+
+          <div className="ssh-test-row">
+            <button className="btn btn-ghost" onClick={testSSH} disabled={!ssh.host || sshTest === 'testing'}>
+              {sshTest === 'testing' ? '⟳ Проверяю...' : '🔌 Проверить соединение'}
+            </button>
+            {sshTest && sshTest !== 'testing' && (
+              <span className={`ssh-test-result ${sshTest.ok ? 'ok' : 'fail'}`}>
+                {sshTest.ok ? `✓ ${sshTest.msg}` : `✗ ${sshTest.msg}`}
+              </span>
+            )}
           </div>
         </section>
       </div>

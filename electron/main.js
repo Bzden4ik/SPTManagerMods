@@ -7,6 +7,20 @@ const AdmZip = require('adm-zip')
 const { NodeSSH } = require('node-ssh')
 const isDev = !app.isPackaged
 
+// ─── Глобальный перехватчик SSH/сетевых ошибок ─────────────────────────────
+process.on('uncaughtException', (err) => {
+  const ignorable = ['ECONNRESET', 'EPIPE', 'ETIMEDOUT', 'ECONNREFUSED', 'EHOSTUNREACH']
+  if (ignorable.some(code => err.code === code || err.message?.includes(code))) {
+    console.warn('[SSH] Ignored network error:', err.message)
+    return
+  }
+  console.error('[UNCAUGHT]', err)
+})
+
+process.on('unhandledRejection', (reason) => {
+  console.warn('[UNHANDLED REJECTION]', reason)
+})
+
 // ─── Реестр установленных модов ────────────────────────────────────────────
 function getRegistryPath() {
   return path.join(app.getPath('userData'), 'installed_mods.json')
@@ -30,16 +44,67 @@ function registryKey(mod) {
   return null
 }
 
-function checkModPaths(entry) {
+function checkModPaths(entry, sshResults = {}) {
   if (!entry?.paths?.length) return false
-  return entry.paths.some(p => fs.existsSync(p))
+  return entry.paths.some(p => {
+    if (p.startsWith('ssh:')) {
+      // Если есть результат проверки — используем его, иначе считаем установленным
+      return p in sshResults ? sshResults[p] : true
+    }
+    return fs.existsSync(p)
+  })
 }
 
-ipcMain.handle('mods:getInstalled', () => {
+ipcMain.handle('mods:getInstalled', async (_, { ssh } = {}) => {
   const reg = loadRegistry()
+
+  // Собираем уникальные SSH-хосты из всех путей
+  const sshPaths = {}
+  for (const entry of Object.values(reg)) {
+    for (const p of (entry.paths || [])) {
+      if (p.startsWith('ssh:')) {
+        // Формат: ssh:user@host:path
+        const match = p.match(/^ssh:([^@]+)@([^:]+):(.+)$/)
+        if (match) {
+          const host = match[2]
+          if (!sshPaths[host]) sshPaths[host] = []
+          sshPaths[host].push({ entry, path: p, remotePath: match[3] })
+        }
+      }
+    }
+  }
+
+  // Проверяем SSH пути если есть настройки
+  const sshResults = {} // path → true/false
+  if (ssh?.host && Object.keys(sshPaths).length > 0) {
+    const conn = new NodeSSH()
+    let connected = false
+    try {
+      const connCfg = { host: ssh.host, port: parseInt(ssh.port) || 22, username: ssh.user, readyTimeout: 6000 }
+      if (ssh.authType === 'key') connCfg.privateKeyPath = ssh.keyPath
+      else connCfg.password = ssh.password
+      await conn.connect(connCfg)
+      connected = true
+
+      const hostPaths = sshPaths[ssh.host] || []
+      for (const { path: fullPath, remotePath } of hostPaths) {
+        const res = await conn.execCommand(`if exist "${remotePath}" (echo 1) else (echo 0)`)
+        // Пробуем и Windows и Linux команду
+        const winOut = res.stdout?.trim()
+        if (winOut === '1' || winOut === '0') {
+          sshResults[fullPath] = winOut === '1'
+        } else {
+          const res2 = await conn.execCommand(`[ -e "${remotePath}" ] && echo 1 || echo 0`)
+          sshResults[fullPath] = res2.stdout?.trim() === '1'
+        }
+      }
+    } catch {}
+    if (connected) try { conn.dispose() } catch {}
+  }
+
   return Object.values(reg).map(entry => ({
     ...entry,
-    isPresent: checkModPaths(entry)
+    isPresent: checkModPaths(entry, sshResults)
   }))
 })
 
@@ -212,7 +277,58 @@ async function uploadDirSSH(ssh, localDir, remoteDir, logFn) {
   })
 }
 
-// ─── Главный обработчик установки ──────────────────────────────────────────
+// ─── Тест SSH соединения ────────────────────────────────────────────────────
+ipcMain.handle('ssh:test', async (_, { ssh }) => {
+  return new Promise((resolve) => {
+    const conn = new NodeSSH()
+    let settled = false
+
+    const done = (result) => {
+      if (settled) return
+      settled = true
+      try { conn.dispose() } catch {}
+      resolve(result)
+    }
+
+    const timer = setTimeout(() => {
+      done({ success: false, error: 'Таймаут подключения (8 сек)' })
+    }, 8000)
+
+    const connCfg = {
+      host: ssh.host,
+      port: parseInt(ssh.port) || 22,
+      username: ssh.user,
+      readyTimeout: 7000,
+      keepaliveInterval: 0,
+    }
+    if (ssh.authType === 'key') connCfg.privateKeyPath = ssh.keyPath
+    else connCfg.password = ssh.password
+
+    conn.connect(connCfg).then(async () => {
+      clearTimeout(timer)
+      try {
+        const result = await conn.execCommand('echo OK && uname -a')
+        done({ success: true, info: result.stdout?.trim() })
+      } catch (e) {
+        done({ success: false, error: e.message })
+      }
+    }).catch((e) => {
+      clearTimeout(timer)
+      done({ success: false, error: e.message })
+    })
+
+    // Ловим низкоуровневые ошибки сокета через внутренний клиент
+    try {
+      const client = conn.connection
+      if (client) {
+        client.on('error', (e) => {
+          clearTimeout(timer)
+          done({ success: false, error: e.message })
+        })
+      }
+    } catch {}
+  })
+})
 ipcMain.handle('mods:install', async (event, { mods, gamePath, ssh, serverMode }) => {
   const win = BrowserWindow.fromWebContents(event.sender)
   const log = (msg) => win.webContents.send('install:log', msg)
@@ -254,13 +370,12 @@ ipcMain.handle('mods:install', async (event, { mods, gamePath, ssh, serverMode }
     const { bepinex, sptDir, sptUser } = findDirs(tmpDir)
     log({ type: 'info', text: `Найдено: ${[bepinex && 'BepInEx', sptDir && 'SPT', sptUser && 'user'].filter(Boolean).join(', ') || 'ничего не распознано'}` })
 
-    // Клиентский мод — копируем BepInEx
+    // Клиентский мод (BepInEx) — локально всегда, + SSH если режим 'both'
     if (bepinex) {
       if (!gamePath) {
         log({ type: 'error', text: 'Путь к игре не указан — пропускаю BepInEx' })
       } else {
         try {
-          // Копируем каждую подпапку BepInEx/plugins отдельно для точного трекинга
           const pluginsDir = path.join(bepinex, 'plugins')
           if (fs.existsSync(pluginsDir)) {
             for (const entry of fs.readdirSync(pluginsDir)) {
@@ -274,9 +389,36 @@ ipcMain.handle('mods:install', async (event, { mods, gamePath, ssh, serverMode }
             fse.copySync(bepinex, dest, { overwrite: true })
             installedPaths.push(dest)
           }
-          log({ type: 'success', text: `BepInEx установлен ✓` })
+          log({ type: 'success', text: `BepInEx установлен локально ✓` })
         } catch (err) {
           log({ type: 'error', text: `Ошибка копирования BepInEx: ${err.message}` })
+        }
+      }
+
+      // В режимах 'both' и 'mixed' — заливаем BepInEx и на сервер
+      if (serverMode === 'both' || serverMode === 'mixed') {        if (!ssh?.host) {
+          log({ type: 'error', text: 'SSH не настроен — пропускаю BepInEx на сервер' })
+        } else {
+          try {
+            if (!sshConn) {
+              sshConn = new NodeSSH()
+              const connCfg = { host: ssh.host, port: parseInt(ssh.port) || 22, username: ssh.user, readyTimeout: 10000 }
+              if (ssh.authType === 'key') connCfg.privateKeyPath = ssh.keyPath
+              else connCfg.password = ssh.password
+              log({ type: 'info', text: `Подключаюсь к ${ssh.user}@${ssh.host}:${ssh.port}...` })
+              await sshConn.connect(connCfg)
+              log({ type: 'success', text: `SSH подключён ✓` })
+            }
+            const serverRoot = (ssh.serverPath || 'C:\\SPT').replace(/[/\\]$/, '')
+            const isWinServer = /^[A-Za-z]:/.test(serverRoot)
+            const sep = isWinServer ? '\\' : '/'
+            const remoteBepInEx = serverRoot + sep + 'SPT' + sep + 'BepInEx'
+            await uploadDirSSH(sshConn, bepinex, remoteBepInEx, log)
+            log({ type: 'success', text: `BepInEx залит на сервер ✓` })
+          } catch (err) {
+            log({ type: 'error', text: `SSH ошибка (BepInEx): ${err.message}` })
+            if (sshConn) { try { sshConn.dispose() } catch {} sshConn = null }
+          }
         }
       }
     }
@@ -284,10 +426,13 @@ ipcMain.handle('mods:install', async (event, { mods, gamePath, ssh, serverMode }
     // Серверный мод
     const hasSptContent = sptUser || sptDir
     if (hasSptContent) {
-      if (serverMode === 'local') {
-        // Локальная установка — копируем папку SPT в gamePath
+      // local, both: локально | ssh, both, mixed: SSH
+      const serverLocal = serverMode === 'local' || serverMode === 'both'
+      const serverSSH   = serverMode === 'ssh'   || serverMode === 'both' || serverMode === 'mixed'
+
+      if (serverLocal) {
         if (!gamePath) {
-          log({ type: 'error', text: 'Путь к игре не указан — пропускаю серверный мод' })
+          log({ type: 'error', text: 'Путь к игре не указан — пропускаю локальный SPT' })
         } else if (!sptDir) {
           log({ type: 'error', text: 'Папка SPT не найдена в архиве' })
         } else {
@@ -295,36 +440,62 @@ ipcMain.handle('mods:install', async (event, { mods, gamePath, ssh, serverMode }
             const dest = path.join(gamePath, 'SPT')
             log({ type: 'info', text: `Копирую SPT → ${dest}` })
             fse.copySync(sptDir, dest, { overwrite: true })
-            // Трекаем папки user/mods и user/configs отдельно
-            const userModsDir = path.join(gamePath, 'SPT', 'user', 'mods')
-            installedPaths.push(fs.existsSync(userModsDir) ? userModsDir : dest)
+            // Записываем конкретные папки модов
+            const modsDir = path.join(gamePath, 'SPT', 'user', 'mods')
+            if (fs.existsSync(modsDir)) {
+              for (const modFolder of fs.readdirSync(modsDir)) {
+                installedPaths.push(path.join(modsDir, modFolder))
+              }
+            } else {
+              installedPaths.push(dest)
+            }
             log({ type: 'success', text: `Серверный мод установлен локально ✓` })
           } catch (err) {
             log({ type: 'error', text: `Ошибка копирования SPT: ${err.message}` })
           }
         }
-      } else {
-        // SSH установка — загружаем user на сервер
+      }
+
+      // SSH установка
+      if (serverSSH) {
         if (!ssh?.host) {
-          log({ type: 'error', text: 'SSH не настроен — пропускаю серверный мод' })
+          log({ type: 'error', text: 'SSH не настроен — пропускаю удалённую установку' })
         } else {
           try {
             if (!sshConn) {
               sshConn = new NodeSSH()
-              const connCfg = { host: ssh.host, port: parseInt(ssh.port) || 22, username: ssh.user }
+              const connCfg = { host: ssh.host, port: parseInt(ssh.port) || 22, username: ssh.user, readyTimeout: 10000 }
               if (ssh.authType === 'key') connCfg.privateKeyPath = ssh.keyPath
               else connCfg.password = ssh.password
               log({ type: 'info', text: `Подключаюсь к ${ssh.user}@${ssh.host}:${ssh.port}...` })
               await sshConn.connect(connCfg)
               log({ type: 'success', text: `SSH подключён ✓` })
             }
-            const serverPath = (ssh.serverPath || '/root/SPT/').replace(/\/$/, '')
-            const remoteUser = serverPath + '/user'
-            await uploadDirSSH(sshConn, sptUser, remoteUser, log)
-            installedPaths.push(`ssh:${ssh.user}@${ssh.host}:${remoteUser}`)
-            log({ type: 'success', text: `Серверный мод установлен ✓` })
+            const serverRoot = (ssh.serverPath || 'C:\\SPT').replace(/[/\\]$/, '')
+            const isWinServer = /^[A-Za-z]:/.test(serverRoot)
+            const sep = isWinServer ? '\\' : '/'
+            const uploadSrc = sptUser || path.join(sptDir, 'user')
+            if (!fs.existsSync(uploadSrc)) {
+              log({ type: 'error', text: `Папка user не найдена в архиве для SSH` })
+            } else {
+              const remoteUser = serverRoot + sep + 'SPT' + sep + 'user'
+              await uploadDirSSH(sshConn, uploadSrc, remoteUser, log)
+
+              // Записываем конкретные папки модов, а не всю user/
+              const modsDir = path.join(uploadSrc, 'mods')
+              if (fs.existsSync(modsDir)) {
+                for (const modFolder of fs.readdirSync(modsDir)) {
+                  installedPaths.push(`ssh:${ssh.user}@${ssh.host}:${remoteUser}${sep}mods${sep}${modFolder}`)
+                }
+              } else {
+                // Нет mods/ — пишем корень user как fallback
+                installedPaths.push(`ssh:${ssh.user}@${ssh.host}:${remoteUser}`)
+              }
+              log({ type: 'success', text: `Серверный мод установлен на сервер ✓` })
+            }
           } catch (err) {
             log({ type: 'error', text: `SSH ошибка: ${err.message}` })
+            if (sshConn) { try { sshConn.dispose() } catch {} sshConn = null }
           }
         }
       }

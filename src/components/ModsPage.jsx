@@ -5,7 +5,9 @@ export default function ModsPage({ settings, externalQueue = [], clearExternalQu
   const [mods, setMods] = useState([])
   const [installing, setInstalling] = useState(false)
   const [log, setLog] = useState([])
-  const [serverMode, setServerMode] = useState('local')
+  const [serverMode, setServerMode] = useState(() => localStorage.getItem('serverMode') || 'local')
+
+  const setMode = (m) => { setServerMode(m); localStorage.setItem('serverMode', m) }
 
   useEffect(() => {
     if (externalQueue.length > 0) {
@@ -97,17 +99,19 @@ export default function ModsPage({ settings, externalQueue = [], clearExternalQu
       </div>
 
       <div className="server-mode-bar">
-        <span className="server-mode-label">Серверные моды:</span>
+        <span className="server-mode-label">Режим:</span>
         <div className="mode-tabs">
-          <button
-            className={`mode-tab ${serverMode === 'local' ? 'active' : ''}`}
-            onClick={() => setServerMode('local')}
-          >🖥 Локально (вместе с игрой)</button>
-          <button
-            className={`mode-tab ${serverMode === 'ssh' ? 'active' : ''}`}
-            onClick={() => setServerMode('ssh')}
-          >🌐 Удалённо (SSH)</button>
+          <button className={`mode-tab ${serverMode === 'local' ? 'active' : ''}`} onClick={() => setMode('local')}>🖥 Локально</button>
+          <button className={`mode-tab ${serverMode === 'ssh' ? 'active' : ''}`} onClick={() => setMode('ssh')}>🌐 Сервер</button>
+          <button className={`mode-tab ${serverMode === 'mixed' ? 'active' : ''}`} onClick={() => setMode('mixed')}>🔀 2 в 1</button>
+          <button className={`mode-tab ${serverMode === 'both' ? 'active' : ''}`} onClick={() => setMode('both')}>🖥+🌐 Оба</button>
         </div>
+        <span className="mode-hint">
+          {serverMode === 'local' && 'Клиент → локально · Сервер → локально'}
+          {serverMode === 'ssh'   && 'Клиент → локально · Сервер → сервер'}
+          {serverMode === 'mixed' && 'Клиент → локально + сервер · Сервер → сервер'}
+          {serverMode === 'both'  && 'Клиент → локально + сервер · Сервер → локально + сервер'}
+        </span>
       </div>
 
       <div className="mods-list-wrap">

@@ -1,16 +1,19 @@
 import React, { useState, useEffect } from 'react'
 import './LibraryPage.css'
 
-export default function LibraryPage({ onRemoved }) {
+export default function LibraryPage({ onRemoved, settings }) {
   const [mods, setMods] = useState([])
   const [loading, setLoading] = useState(true)
   const [removing, setRemoving] = useState({})
+  const [checking, setChecking] = useState(false)
 
   const load = async () => {
     setLoading(true)
-    const list = await window.electronAPI.getInstalledMods()
+    setChecking(!!settings?.ssh?.host)
+    const list = await window.electronAPI.getInstalledMods({ ssh: settings?.ssh })
     setMods(list || [])
     setLoading(false)
+    setChecking(false)
   }
 
   useEffect(() => { load() }, [])
@@ -32,7 +35,10 @@ export default function LibraryPage({ onRemoved }) {
       <div className="page-header">
         <div>
           <h1 className="page-title">Библиотека</h1>
-          <p className="page-subtitle">{mods.length} установленных модов</p>
+          <p className="page-subtitle">
+            {mods.length} установленных модов
+            {checking && <span className="ssh-checking"> · 🔌 Проверяю SSH...</span>}
+          </p>
         </div>
         <button className="btn btn-ghost" onClick={load}>↺ Обновить</button>
       </div>

@@ -39,3 +39,11 @@
   background: var(--bg-card);
   color: var(--text-primary);
 }
+
+.ssh-test-row { display: flex; align-items: center; gap: 14px; margin-top: 4px; }
+.ssh-test-result { font-size: 12px; font-family: monospace; }
+.ssh-test-result.ok { color: var(--success, #4ade80); }
+.ssh-test-result.fail { color: var(--error, #f87171); }
+
+.path-preview { margin-top: 6px; font-size: 11px; color: var(--text-dim); line-height: 1.8; }
+.path-preview code { background: rgba(255,255,255,0.06); padding: 1px 5px; border-radius: 3px; color: #60a5fa; font-family: monospace; }

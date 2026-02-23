@@ -138,3 +138,4 @@
 }
 .mode-tab:hover { background: rgba(255,255,255,0.05); color: var(--text); }
 .mode-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.mode-hint { font-size: 11px; color: var(--text-dim); font-style: italic; }

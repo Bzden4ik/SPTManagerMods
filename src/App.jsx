@@ -48,7 +48,7 @@ export default function App() {
         <main className="app-content">
           {page === 'mods' && <ModsPage settings={settings} externalQueue={queue} clearExternalQueue={() => setQueue([])} onInstallDone={refreshInstalled} />}
           {page === 'browse' && <BrowsePage settings={settings} onAddToQueue={addToQueue} filters={browseFilters} setFilters={setBrowseFilters} installedMap={installedMap} />}
-          {page === 'library' && <LibraryPage onRemoved={refreshInstalled} />}
+          {page === 'library' && <LibraryPage settings={settings} onRemoved={refreshInstalled} />}
           {page === 'settings' && <SettingsPage settings={settings} setSettings={setSettings} />}
         </main>
       </div>
