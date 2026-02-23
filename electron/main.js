@@ -294,12 +294,26 @@ async function extractArchive(archivePath) {
   const type = detectArchiveType(archivePath)
 
   const timeout = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error('Таймаут распаковки (60 сек)')), 60000)
+    setTimeout(() => reject(new Error('Таймаут распаковки (10 мин)')), 600000)
   )
 
-  const extract = type === 'zip'
-    ? Promise.resolve(extractZip(archivePath, tmpDir))
-    : extract7z(archivePath, tmpDir)
+  let extract
+  if (type === 'zip') {
+    // Сначала пробуем adm-zip, при ошибке fallback на 7z
+    extract = (async () => {
+      try {
+        extractZip(archivePath, tmpDir)
+      } catch (e) {
+        if (e.message?.includes('Invalid') || e.message?.includes('unsupported')) {
+          await extract7z(archivePath, tmpDir)
+        } else {
+          throw e
+        }
+      }
+    })()
+  } else {
+    extract = extract7z(archivePath, tmpDir)
+  }
 
   await Promise.race([extract, timeout])
   return tmpDir
@@ -607,13 +621,13 @@ ipcMain.handle('mods:install', async (event, { mods, gamePath, ssh, serverMode }
       }
     }
 
-    // Чистим temp архив
-    try { fse.removeSync(tmpDir) } catch {}
+    // Чистим temp архив асинхронно чтобы не блокировать
+    if (tmpDir) setImmediate(() => { try { fse.removeSync(tmpDir) } catch {} })
 
-    // Удаляем скачанный файл из spt_downloads
+    // Удаляем скачанный файл из spt_downloads асинхронно
     const downloadsDir = path.join(os.tmpdir(), 'spt_downloads')
     if (archivePath.startsWith(downloadsDir)) {
-      try { fs.unlinkSync(archivePath) } catch {}
+      setImmediate(() => { try { fs.unlinkSync(archivePath) } catch {} })
     }
 
     // Сохраняем в реестр если есть что записать
@@ -634,7 +648,7 @@ ipcMain.handle('mods:install', async (event, { mods, gamePath, ssh, serverMode }
     log({ type: 'success', text: `${name} — готово\n` })
   }
 
-  if (sshConn) sshConn.dispose()
+  if (sshConn) try { sshConn.dispose() } catch {}
   log({ type: 'done', text: '✓ Установка завершена' })
 })
 
