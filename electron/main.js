@@ -359,7 +359,29 @@ async function uploadDirSSH(ssh, localDir, remoteDir, logFn) {
   })
 }
 
-// ─── Тест SSH соединения ────────────────────────────────────────────────────
+async function connectSSH(ssh, log) {
+  const conn = new NodeSSH()
+  const connCfg = {
+    host: ssh.host, port: parseInt(ssh.port) || 22, username: ssh.user,
+    readyTimeout: 15000, keepaliveInterval: 5000
+  }
+  if (ssh.authType === 'key') connCfg.privateKeyPath = ssh.keyPath
+  else connCfg.password = ssh.password
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      if (attempt > 1) {
+        log({ type: 'info', text: `SSH: попытка ${attempt}/3...` })
+        await new Promise(r => setTimeout(r, 2000 * attempt))
+      }
+      await conn.connect(connCfg)
+      return conn
+    } catch (e) {
+      if (attempt === 3) throw e
+      log({ type: 'info', text: `SSH: ошибка (${e.message}), повтор...` })
+    }
+  }
+}
 ipcMain.handle('ssh:test', async (_, { ssh }) => {
   return new Promise((resolve) => {
     const conn = new NodeSSH()
@@ -478,17 +500,14 @@ ipcMain.handle('mods:install', async (event, { mods, gamePath, ssh, serverMode }
       }
 
       // В режимах 'both' и 'mixed' — заливаем BepInEx и на сервер
-      if (serverMode === 'both' || serverMode === 'mixed') {        if (!ssh?.host) {
+      if (serverMode === 'both' || serverMode === 'mixed') {
+        if (!ssh?.host) {
           log({ type: 'error', text: 'SSH не настроен — пропускаю BepInEx на сервер' })
         } else {
           try {
             if (!sshConn) {
-              sshConn = new NodeSSH()
-              const connCfg = { host: ssh.host, port: parseInt(ssh.port) || 22, username: ssh.user, readyTimeout: 10000 }
-              if (ssh.authType === 'key') connCfg.privateKeyPath = ssh.keyPath
-              else connCfg.password = ssh.password
               log({ type: 'info', text: `Подключаюсь к ${ssh.user}@${ssh.host}:${ssh.port}...` })
-              await sshConn.connect(connCfg)
+              sshConn = await connectSSH(ssh, log)
               log({ type: 'success', text: `SSH подключён ✓` })
             }
             const serverRoot = (ssh.serverPath || 'C:\\SPT').replace(/[/\\]$/, '')
@@ -554,12 +573,8 @@ ipcMain.handle('mods:install', async (event, { mods, gamePath, ssh, serverMode }
         } else {
           try {
             if (!sshConn) {
-              sshConn = new NodeSSH()
-              const connCfg = { host: ssh.host, port: parseInt(ssh.port) || 22, username: ssh.user, readyTimeout: 10000 }
-              if (ssh.authType === 'key') connCfg.privateKeyPath = ssh.keyPath
-              else connCfg.password = ssh.password
               log({ type: 'info', text: `Подключаюсь к ${ssh.user}@${ssh.host}:${ssh.port}...` })
-              await sshConn.connect(connCfg)
+              sshConn = await connectSSH(ssh, log)
               log({ type: 'success', text: `SSH подключён ✓` })
             }
             const serverRoot = (ssh.serverPath || 'C:\\SPT').replace(/[/\\]$/, '')
