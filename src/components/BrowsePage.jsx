@@ -10,6 +10,8 @@ export default function BrowsePage({ settings, onAddToQueue, filters, setFilters
   const [categories, setCategories] = useState([])
   const [showVersionFilter, setShowVersionFilter] = useState(false)
   const [showSortMenu, setShowSortMenu] = useState(false)
+  const [downloadLog, setDownloadLog] = useState([])
+  const [downloadItems, setDownloadItems] = useState([]) // { name, slug, version, pct, status }
   const [downloading, setDownloading] = useState({})
   const [expandedMod, setExpandedMod] = useState(null)
   const [modVersions, setModVersions] = useState({})
@@ -104,44 +106,76 @@ export default function BrowsePage({ settings, onAddToQueue, filters, setFilters
   }
 
   const downloadWithDeps = async (mod) => {
-    // Сначала получаем последнюю версию мода
+    setDownloadLog([])
+    setDownloadItems([])
+
     const verRes = await window.electronAPI.forgeGetModVersions({ token, modId: mod.id })
     const versions = verRes?.data
     if (!versions?.length) return
     const latest = versions[0]
 
-    // Зависимости
     const depsRes = await window.electronAPI.forgeGetDependencies({ token, modId: mod.id, version: latest.version })
     const deps = depsRes?.data || []
     const toDownload = [{ mod, version: latest }, ...deps.map(d => ({ mod: d, version: null }))]
 
-    window.electronAPI.onDownloadProgress(({ filename, received, total }) => {
-      const pct = total > 0 ? Math.round(received / total * 100) : -1
-      setDownloading(prev => ({ ...prev, [filename]: pct }))
-    })
+    // Получаем уже скачанные файлы в temp
+    const tempFiles = await window.electronAPI.getTempDownloads().catch(() => [])
+    const tempNames = new Set(tempFiles.map(f => f.name))
 
-    const downloaded = []
-    for (const item of toDownload) {
+    // Инициализируем список с проверкой на уже скачанные
+    const items = await Promise.all(toDownload.map(async item => {
       let ver = item.version
       if (!ver) {
         const vr = await window.electronAPI.forgeGetModVersions({ token, modId: item.mod.id })
         ver = vr?.data?.[0]
       }
-      if (!ver) continue
-      const dlUrl = ver.link || ver.download_url || ver.file_url
-      if (!dlUrl) continue
-      const filename = `${item.mod.slug || item.mod.id}_${ver.version || 'latest'}.zip`
-      setDownloading(prev => ({ ...prev, [filename]: 0 }))
-      try {
-        const localPath = await window.electronAPI.forgeDownloadMod({ url: dlUrl, token, filename })
+      const filename = ver ? `${item.mod.slug || item.mod.id}_${ver.version || 'latest'}.zip` : null
+      const alreadyHave = filename && tempNames.has(filename)
+      return { mod: item.mod, ver, filename, pct: alreadyHave ? 100 : 0, status: alreadyHave ? 'cached' : 'pending' }
+    }))
+    setDownloadItems(items)
+
+    window.electronAPI.removeDownloadProgress()
+    window.electronAPI.onDownloadProgress(({ filename, received, total }) => {
+      const mb = (received / 1024 / 1024).toFixed(1)
+      const totalMb = total > 1024 * 1024 ? (total / 1024 / 1024).toFixed(1) : null
+      const pct = totalMb ? Math.min(99, Math.round(received / total * 100)) : null
+      setDownloadItems(prev => prev.map(it =>
+        it.filename === filename ? { ...it, pct, mb, totalMb, status: 'downloading' } : it
+      ))
+    })
+
+    const downloaded = []
+    for (const item of items) {
+      if (!item.ver || !item.filename) continue
+
+      // Уже есть в temp — пропускаем скачивание
+      if (item.status === 'cached') {
+        const existing = tempFiles.find(f => f.name === item.filename)
         downloaded.push({
-          path: localPath,
-          name: filename,
-          type: 'unknown',
-          status: 'pending',
-          meta: { id: item.mod.id, name: item.mod.name, version: ver.version, slug: item.mod.slug }
+          path: existing.path, name: item.filename, type: 'unknown', status: 'pending',
+          meta: { id: item.mod.id, name: item.mod.name, version: item.ver.version, slug: item.mod.slug }
         })
-      } catch (e) { console.error('Download error', e) }
+        continue
+      }
+
+      const dlUrl = item.ver.link || item.ver.download_url || item.ver.file_url
+      if (!dlUrl) {
+        setDownloadItems(prev => prev.map(it => it.filename === item.filename ? { ...it, status: 'error' } : it))
+        continue
+      }
+
+      setDownloadItems(prev => prev.map(it => it.filename === item.filename ? { ...it, status: 'downloading' } : it))
+      try {
+        const localPath = await window.electronAPI.forgeDownloadMod({ url: dlUrl, token, filename: item.filename })
+        downloaded.push({
+          path: localPath, name: item.filename, type: 'unknown', status: 'pending',
+          meta: { id: item.mod.id, name: item.mod.name, version: item.ver.version, slug: item.mod.slug }
+        })
+        setDownloadItems(prev => prev.map(it => it.filename === item.filename ? { ...it, pct: 100, status: 'done' } : it))
+      } catch (e) {
+        setDownloadItems(prev => prev.map(it => it.filename === item.filename ? { ...it, status: 'error' } : it))
+      }
     }
 
     window.electronAPI.removeDownloadProgress()
@@ -343,6 +377,39 @@ export default function BrowsePage({ settings, onAddToQueue, filters, setFilters
         <span>{page} / {totalPages}</span>
         <button className="btn btn-ghost" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}>Вперёд →</button>
       </div>
+
+      {downloadItems.length > 0 && (
+        <div className="download-panel">
+          <div className="download-panel-header">
+            Загрузка
+            <button className="log-close" onClick={() => setDownloadItems([])}>✕</button>
+          </div>
+          {downloadItems.map((it, i) => (
+            <div key={i} className={`download-item status-${it.status}`}>
+              <div className="download-item-info">
+                <span className="download-item-name">{it.mod.name}</span>
+                {it.ver && <span className="tag tag-ver">v{it.ver.version}</span>}
+                {it.status === 'cached' && <span className="tag tag-cached">✓ уже скачан</span>}
+                {it.status === 'error'  && <span className="tag tag-missing">✗ ошибка</span>}
+                {it.status === 'done'   && <span className="tag tag-ok">✓ готово</span>}
+              </div>
+              {(it.status === 'downloading' || it.status === 'pending') && (
+                <div className="dl-progress-wrap">
+                  <div className="dl-progress">
+                    <div className={`dl-bar ${it.pct === null ? 'dl-bar-indeterminate' : ''}`}
+                      style={{ width: it.pct !== null ? it.pct + '%' : '100%' }} />
+                  </div>
+                  <span className="dl-pct">
+                    {it.pct !== null
+                      ? `${it.pct}% · ${it.mb || 0} / ${it.totalMb || '?'} МБ`
+                      : it.mb ? `${it.mb} МБ...` : '...'}
+                  </span>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

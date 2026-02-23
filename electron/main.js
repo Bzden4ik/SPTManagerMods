@@ -197,6 +197,17 @@ ipcMain.handle('mods:remove', async (_, { key, ssh }) => {
   return { success: errors.length === 0, errors }
 })
 
+ipcMain.handle('mods:getTempDownloads', () => {
+  const tmpDir = path.join(os.tmpdir(), 'spt_downloads')
+  if (!fs.existsSync(tmpDir)) return []
+  return fs.readdirSync(tmpDir)
+    .filter(f => /\.(zip|7z|rar)$/i.test(f))
+    .map(f => {
+      const full = path.join(tmpDir, f)
+      return { path: full, name: f, type: 'unknown', status: 'pending', fromTemp: true }
+    })
+})
+
 function createWindow() {
   const iconPath = path.join(__dirname, '../assets/icon.ico')
   const win = new BrowserWindow({
@@ -281,11 +292,16 @@ async function extractArchive(archivePath) {
   const tmpDir = path.join(os.tmpdir(), 'spt_mod_' + Date.now())
   fs.mkdirSync(tmpDir, { recursive: true })
   const type = detectArchiveType(archivePath)
-  if (type === 'zip') {
-    extractZip(archivePath, tmpDir)
-  } else {
-    await extract7z(archivePath, tmpDir)
-  }
+
+  const timeout = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error('Таймаут распаковки (60 сек)')), 60000)
+  )
+
+  const extract = type === 'zip'
+    ? Promise.resolve(extractZip(archivePath, tmpDir))
+    : extract7z(archivePath, tmpDir)
+
+  await Promise.race([extract, timeout])
   return tmpDir
 }
 
@@ -413,7 +429,7 @@ ipcMain.handle('mods:install', async (event, { mods, gamePath, ssh, serverMode }
     try {
       log({ type: 'info', text: `Распаковываю...` })
       const archiveType = detectArchiveType(archivePath)
-      log({ type: 'info', text: `Формат: ${archiveType}` })
+      log({ type: 'info', text: `Формат: ${archiveType}, размер: ${(fs.statSync(archivePath).size / 1024 / 1024).toFixed(1)} МБ` })
       tmpDir = await extractArchive(archivePath)
       log({ type: 'info', text: `Распаковано в ${tmpDir}` })
     } catch (err) {
@@ -821,8 +837,7 @@ function normalizeDownloadUrl(url) {
 
 // ─── Скачать файл по URL во временную папку ────────────────────────────────
 ipcMain.handle('forge:downloadMod', async (event, { url, token, filename }) => {
-  const https = require('https')
-  const http = require('http')
+  const { net } = require('electron')
   const win = BrowserWindow.fromWebContents(event.sender)
 
   const tmpDir = path.join(os.tmpdir(), 'spt_downloads')
@@ -831,36 +846,43 @@ ipcMain.handle('forge:downloadMod', async (event, { url, token, filename }) => {
 
   const normalizedUrl = normalizeDownloadUrl(url)
 
-  function doDownload(dlUrl, redirectCount = 0) {
+  async function doDownload(dlUrl, redirectCount = 0) {
+    if (redirectCount > 10) throw new Error('Too many redirects')
     return new Promise((resolve, reject) => {
-      if (redirectCount > 10) return reject(new Error('Too many redirects'))
-      const mod = dlUrl.startsWith('https') ? https : http
-      const opts = new URL(dlUrl)
-      const reqOpts = {
-        hostname: opts.hostname, path: opts.pathname + opts.search, method: 'GET',
-        headers: { 'Authorization': `Bearer ${token}`, 'Accept': '*/*', 'User-Agent': 'Mozilla/5.0' }
-      }
-      mod.request(reqOpts, (res) => {
-        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          const next = res.headers.location.startsWith('http') ? res.headers.location : new URL(res.headers.location, dlUrl).href
-          res.resume()
-          return doDownload(next, redirectCount + 1).then(resolve).catch(reject)
+      const request = net.request({ url: dlUrl, redirect: 'manual' })
+      request.setHeader('Authorization', `Bearer ${token}`)
+      request.setHeader('Accept', '*/*')
+      request.setHeader('User-Agent', 'Mozilla/5.0')
+
+      request.on('redirect', (statusCode, method, redirectUrl) => {
+        request.abort()
+        doDownload(redirectUrl, redirectCount + 1).then(resolve).catch(reject)
+      })
+
+      request.on('response', (response) => {
+        if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+          const next = response.headers.location[0]
+          doDownload(next, redirectCount + 1).then(resolve).catch(reject)
+          return
         }
-        if (res.statusCode !== 200) {
-          res.resume()
-          return reject(new Error(`HTTP ${res.statusCode} от ${dlUrl}`))
+        if (response.statusCode !== 200) {
+          reject(new Error(`HTTP ${response.statusCode}`))
+          return
         }
-        const total = parseInt(res.headers['content-length'] || '0')
+        const total = parseInt(response.headers['content-length']?.[0] || '0')
         let received = 0
         const file = fs.createWriteStream(dest)
-        res.on('data', chunk => {
+        response.on('data', chunk => {
           received += chunk.length
-          if (total > 0) win.webContents.send('forge:downloadProgress', { filename, received, total })
+          win.webContents.send('forge:downloadProgress', { filename, received, total })
+          file.write(chunk)
         })
-        res.pipe(file)
-        file.on('finish', () => file.close(() => resolve(dest)))
-        file.on('error', reject)
-      }).on('error', reject).end()
+        response.on('end', () => file.close(() => resolve(dest)))
+        response.on('error', reject)
+      })
+
+      request.on('error', reject)
+      request.end()
     })
   }
 

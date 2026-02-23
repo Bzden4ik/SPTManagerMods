@@ -16,6 +16,19 @@ export default function ModsPage({ settings, externalQueue = [], clearExternalQu
     }
   }, [externalQueue])
 
+  // Подгружаем файлы из temp папки если список пустой
+  useEffect(() => {
+    window.electronAPI.getTempDownloads().then(files => {
+      if (files.length > 0) {
+        setMods(prev => {
+          const existingPaths = new Set(prev.map(m => m.path))
+          const newFiles = files.filter(f => !existingPaths.has(f.path))
+          return [...prev, ...newFiles]
+        })
+      }
+    }).catch(() => {})
+  }, [])
+
   const addMods = async () => {
     const files = await window.electronAPI.openArchives()
     if (!files.length) return
@@ -33,17 +46,17 @@ export default function ModsPage({ settings, externalQueue = [], clearExternalQu
 
   const installAll = async () => {
     setInstalling(true)
-    setLog([])
+    setLog([{ type: 'info', text: '▶ Запускаю установку...' }])
     setMods(prev => prev.map(m => ({ ...m, status: 'pending' })))
 
     let currentIndex = -1
     window.electronAPI.onInstallLog((msg) => {
       setLog(prev => [...prev, msg])
-      if (msg.text && msg.text.startsWith('▶')) {
+      if (msg.text?.startsWith('▶')) {
         currentIndex++
         setMods(prev => prev.map((m, i) => i === currentIndex ? { ...m, status: 'installing' } : m))
       }
-      if (msg.type === 'success' && msg.text && msg.text.includes('— готово')) {
+      if (msg.type === 'success' && msg.text?.includes('— готово')) {
         const idx = currentIndex
         setMods(prev => prev.map((m, i) => i === idx ? { ...m, status: 'done' } : m))
       }
@@ -53,12 +66,17 @@ export default function ModsPage({ settings, externalQueue = [], clearExternalQu
       }
     })
 
-    await window.electronAPI.installMods({
-      mods: mods.map(m => ({ path: m.path, meta: m.meta || null })),
-      gamePath: settings.gamePath,
-      ssh: settings.ssh,
-      serverMode
-    })
+    try {
+      await window.electronAPI.installMods({
+        mods: mods.map(m => ({ path: m.path, meta: m.meta || null })),
+        gamePath: settings.gamePath,
+        ssh: settings.ssh,
+        serverMode
+      })
+    } catch (e) {
+      setLog(prev => [...prev, { type: 'error', text: `Критическая ошибка: ${e.message}` }])
+    }
+
     window.electronAPI.removeInstallLog()
     setInstalling(false)
     if (onInstallDone) onInstallDone()

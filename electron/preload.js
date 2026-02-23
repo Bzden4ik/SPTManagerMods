@@ -11,7 +11,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   testSSH: (p) => ipcRenderer.invoke('ssh:test', p),
   getInstalledMods: (p) => ipcRenderer.invoke('mods:getInstalled', p),
   checkModInstalled: (p) => ipcRenderer.invoke('mods:checkInstalled', p),
-  removeMod: (p) => ipcRenderer.invoke('mods:remove', p),  onInstallLog: (cb) => ipcRenderer.on('install:log', (_, msg) => cb(msg)),
+  removeMod: (p) => ipcRenderer.invoke('mods:remove', p),
+  installMods: (data) => ipcRenderer.invoke('mods:install', data),
+  getTempDownloads: () => ipcRenderer.invoke('mods:getTempDownloads'),
+  onInstallLog: (cb) => ipcRenderer.on('install:log', (_, msg) => cb(msg)),
   removeInstallLog: () => ipcRenderer.removeAllListeners('install:log'),
   // Forge API
   forgeGetMods: (p) => ipcRenderer.invoke('forge:getMods', p),
