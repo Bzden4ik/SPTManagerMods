@@ -29,9 +29,11 @@
   "build": {
     "appId": "com.spt.modmanager",
     "productName": "SPT Mod Manager",
-    "files": ["dist/**/*", "electron/**/*"],
+    "icon": "assets/icon.ico",
+    "files": ["dist/**/*", "electron/**/*", "assets/**/*"],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "assets/icon.ico"
     }
   }
 }

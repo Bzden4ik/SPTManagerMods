@@ -67,6 +67,7 @@ ipcMain.handle('mods:remove', async (_, { key }) => {
 })
 
 function createWindow() {
+  const iconPath = path.join(__dirname, '../assets/icon.ico')
   const win = new BrowserWindow({
     width: 1100,
     height: 750,
@@ -74,6 +75,7 @@ function createWindow() {
     minHeight: 600,
     frame: false,
     backgroundColor: '#0f1117',
+    icon: iconPath,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
