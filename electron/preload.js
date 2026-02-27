@@ -14,6 +14,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removeMod: (p) => ipcRenderer.invoke('mods:remove', p),
   installMods: (data) => ipcRenderer.invoke('mods:install', data),
   getTempDownloads: () => ipcRenderer.invoke('mods:getTempDownloads'),
+  exportModList: () => ipcRenderer.invoke('mods:exportList'),
+  deleteTempFile: (p) => ipcRenderer.invoke('mods:deleteTempFile', p),
   onInstallLog: (cb) => ipcRenderer.on('install:log', (_, msg) => cb(msg)),
   removeInstallLog: () => ipcRenderer.removeAllListeners('install:log'),
   // Forge API

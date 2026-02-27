@@ -37,6 +37,17 @@ export default function App() {
   useEffect(() => { saveState('settings', settings) }, [settings])
   useEffect(() => { saveState('browseFilters', browseFilters) }, [browseFilters])
 
+  const [modpackState, setModpackState] = useState(() => {
+    const saved = loadState('modpackState', null)
+    // Защита от старых/битых данных в localStorage
+    if (!saved || !Array.isArray(saved.downloadItems)) {
+      return { importKey: '', importedMods: null, downloadItems: [] }
+    }
+    return saved
+  })
+
+  useEffect(() => { saveState('modpackState', modpackState) }, [modpackState])
+
   const addToQueue = (mods) => {
     setQueue(prev => [...prev, ...mods])
     setPage('mods')
@@ -50,7 +61,7 @@ export default function App() {
           {page === 'mods' && <ModsPage settings={settings} externalQueue={queue} clearExternalQueue={() => setQueue([])} onInstallDone={refreshInstalled} />}
           {page === 'browse' && <BrowsePage settings={settings} onAddToQueue={addToQueue} filters={browseFilters} setFilters={setBrowseFilters} installedMap={installedMap} />}
           {page === 'library' && <LibraryPage settings={settings} onRemoved={refreshInstalled} />}
-          {page === 'modpack' && <ModpackPage settings={settings} onAddToQueue={addToQueue} />}
+          {page === 'modpack' && <ModpackPage settings={settings} onAddToQueue={addToQueue} modpackState={modpackState} setModpackState={setModpackState} />}
           {page === 'settings' && <SettingsPage settings={settings} setSettings={setSettings} />}
         </main>
       </div>

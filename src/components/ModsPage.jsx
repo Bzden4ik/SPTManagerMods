@@ -41,8 +41,25 @@ export default function ModsPage({ settings, externalQueue = [], clearExternalQu
     setMods(prev => [...prev, ...newMods])
   }
 
-  const removeMod = (idx) => setMods(prev => prev.filter((_, i) => i !== idx))
-  const clearAll = () => setMods([])
+  const removeMod = (idx) => {
+    const mod = mods[idx]
+    // Удаляем файл из temp если он оттуда
+    const tmpDir = 'spt_downloads'
+    if (mod?.path?.includes(tmpDir)) {
+      window.electronAPI.deleteTempFile({ path: mod.path }).catch(() => {})
+    }
+    setMods(prev => prev.filter((_, i) => i !== idx))
+  }
+
+  const clearAll = () => {
+    // Удаляем все файлы из temp
+    mods.forEach(mod => {
+      if (mod?.path?.includes('spt_downloads')) {
+        window.electronAPI.deleteTempFile({ path: mod.path }).catch(() => {})
+      }
+    })
+    setMods([])
+  }
 
   const installAll = async () => {
     setInstalling(true)

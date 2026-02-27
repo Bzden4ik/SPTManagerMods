@@ -11,11 +11,21 @@
 .import-row { display: flex; gap: 8px; }
 .key-input { flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px; color: var(--text); font-size: 13px; font-family: monospace; }
 .key-input:focus { outline: none; border-color: var(--accent); }
-
 .import-error { font-size: 13px; color: #f87171; }
 
-.import-result { display: flex; flex-direction: column; gap: 10px; }
-.import-count { font-size: 12px; color: var(--text-secondary); }
-.import-list { display: flex; flex-direction: column; gap: 6px; max-height: 240px; overflow-y: auto; }
-.import-mod { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: rgba(255,255,255,0.03); border-radius: 6px; }
-.import-mod-name { flex: 1; font-size: 13px; color: var(--text); }
+.mp-download-list { display: flex; flex-direction: column; gap: 6px; }
+.mp-dl-item { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: var(--radius); transition: border-color 0.15s; }
+.mp-status-downloading { border-color: rgba(232,160,48,0.3); }
+.mp-status-done        { border-color: rgba(74,222,128,0.25); }
+.mp-status-error       { border-color: rgba(248,113,113,0.25); }
+
+.mp-dl-info { display: flex; align-items: center; gap: 8px; }
+.mp-dl-name { flex: 1; font-size: 13px; color: var(--text); }
+.mp-dl-badge { font-size: 11px; font-weight: 600; white-space: nowrap; }
+.mp-badge-pending     { color: var(--text-dim); }
+.mp-badge-downloading { color: var(--accent); }
+.mp-badge-done        { color: #4ade80; }
+.mp-progress-summary { font-size: 12px; color: var(--text-secondary); padding: 4px 0; }
+.mp-items-scroll { display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow-y: auto; }
+.mp-actions { display: flex; gap: 8px; padding-top: 4px; }
+.mp-badge-cancelled { color: var(--text-dim); }

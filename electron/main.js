@@ -166,17 +166,39 @@ ipcMain.handle('mods:remove', async (_, { key, ssh }) => {
       if (!match) continue
       const remotePath = match[3]
       try {
-        if (!sshConn && ssh?.host) {
+        if (!sshConn) {
+          if (!ssh?.host) { errors.push(`SSH: нет настроек подключения`); continue }
           sshConn = new NodeSSH()
-          const connCfg = { host: ssh.host, port: parseInt(ssh.port) || 22, username: ssh.user, readyTimeout: 8000 }
+          const connCfg = { host: ssh.host, port: parseInt(ssh.port) || 22, username: ssh.user, readyTimeout: 10000 }
           if (ssh.authType === 'key') connCfg.privateKeyPath = ssh.keyPath
           else connCfg.password = ssh.password
           await sshConn.connect(connCfg)
         }
         if (sshConn) {
-          // Пробуем Windows команду, потом Linux
-          const res = await sshConn.execCommand(`rmdir /s /q "${remotePath}" 2>nul || rm -rf "${remotePath}"`)
-          console.log('[remove ssh]', remotePath, res.stdout, res.stderr)
+          const isWin = /^[A-Za-z]:/.test(remotePath)
+          let deleted = false
+
+          if (isWin) {
+            // Windows: пробуем rmdir (папка) и del (файл)
+            const r1 = await sshConn.execCommand(`rmdir /s /q "${remotePath}"`)
+            if (!r1.stderr?.includes('не найден') && !r1.stderr?.includes('cannot find')) {
+              deleted = true
+            } else {
+              const r2 = await sshConn.execCommand(`del /f /q "${remotePath}"`)
+              deleted = !r2.stderr
+            }
+          } else {
+            // Linux
+            const r = await sshConn.execCommand(`rm -rf "${remotePath}"`)
+            deleted = !r.stderr
+          }
+
+          // Проверяем что реально удалилось
+          const check = isWin
+            ? await sshConn.execCommand(`if exist "${remotePath}" (echo 1) else (echo 0)`)
+            : await sshConn.execCommand(`[ -e "${remotePath}" ] && echo 1 || echo 0`)
+          const still = check.stdout?.trim() === '1'
+          if (still) errors.push(`SSH: не удалось удалить ${remotePath}`)
         }
       } catch (e) {
         errors.push(`SSH ${remotePath}: ${e.message}`)
@@ -195,6 +217,25 @@ ipcMain.handle('mods:remove', async (_, { key, ssh }) => {
   delete reg[key]
   saveRegistry(reg)
   return { success: errors.length === 0, errors }
+})
+
+ipcMain.handle('mods:exportList', async () => {
+  const reg = loadRegistry()
+  const names = Object.values(reg).map(e => e.name).filter(Boolean).sort()
+  const content = names.join('\n')
+  const filePath = path.join(app.getPath('desktop'), 'spt-mods-list.txt')
+  fs.writeFileSync(filePath, content, 'utf8')
+  require('electron').shell.openPath(filePath)
+  return { success: true, count: names.length, filePath }
+})
+
+ipcMain.handle('mods:deleteTempFile', (_, { path: filePath }) => {
+  try {
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath)
+    return { success: true }
+  } catch (e) {
+    return { success: false, error: e.message }
+  }
 })
 
 ipcMain.handle('mods:getTempDownloads', () => {
@@ -267,7 +308,14 @@ function extractZip(archivePath, destDir) {
 // ─── Утилита: извлечь 7z/rar через node-7z ────────────────────────────────
 async function extract7z(archivePath, destDir) {
   const Seven = require('node-7z')
-  const sevenBin = require('7zip-bin').path7za
+  // В packaged приложении 7za.exe лежит в resources/ (extraResources)
+  // В dev режиме — из node_modules
+  let sevenBin
+  if (app.isPackaged) {
+    sevenBin = path.join(process.resourcesPath, '7za.exe')
+  } else {
+    sevenBin = require('7zip-bin').path7za
+  }
   return new Promise((resolve, reject) => {
     const stream = Seven.extractFull(archivePath, destDir, { $bin: sevenBin })
     stream.on('end', resolve)
@@ -363,14 +411,49 @@ function findDirs(baseDir) {
 // ─── Рекурсивно загрузить папку по SSH ─────────────────────────────────────
 async function uploadDirSSH(ssh, localDir, remoteDir, logFn) {
   logFn({ type: 'info', text: `Загружаю ${localDir} → ${remoteDir}` })
-  await ssh.execCommand(`mkdir -p "${remoteDir}"`)
-  await ssh.putDirectory(localDir, remoteDir, {
-    recursive: true,
-    concurrency: 5,
-    tick(local, remote, err) {
-      if (err) logFn({ type: 'error', text: `Ошибка: ${local}` })
+
+  // Создаём корневую папку
+  await ssh.execCommand(`mkdir "${remoteDir}" 2>nul & md "${remoteDir}" 2>nul || mkdir -p "${remoteDir}" 2>/dev/null; true`)
+
+  const allFiles = []
+  function collectFiles(dir, remoteBase) {
+    const entries = fs.readdirSync(dir, { withFileTypes: true })
+    for (const entry of entries) {
+      const localPath = path.join(dir, entry.name)
+      const remotePath = remoteBase + '\\' + entry.name
+      if (entry.isDirectory()) {
+        collectFiles(localPath, remotePath)
+      } else {
+        allFiles.push({ local: localPath, remote: remotePath })
+      }
     }
-  })
+  }
+  collectFiles(localDir, remoteDir)
+
+  // Создаём все нужные папки
+  const remoteDirs = new Set()
+  for (const f of allFiles) {
+    remoteDirs.add(f.remote.substring(0, f.remote.lastIndexOf('\\')))
+  }
+  for (const d of remoteDirs) {
+    await ssh.execCommand(`mkdir "${d}" 2>nul & md "${d}" 2>nul || mkdir -p "${d}" 2>/dev/null; true`)
+  }
+
+  // Загружаем файлы батчами по 5
+  let errors = 0
+  for (let i = 0; i < allFiles.length; i += 5) {
+    const batch = allFiles.slice(i, i + 5)
+    await Promise.all(batch.map(async f => {
+      try {
+        await ssh.putFile(f.local, f.remote)
+      } catch (e) {
+        errors++
+        logFn({ type: 'error', text: `Ошибка: ${path.basename(f.local)}: ${e.message}` })
+      }
+    }))
+  }
+  if (errors === 0) logFn({ type: 'success', text: `Загружено ${allFiles.length} файлов ✓` })
+  else logFn({ type: 'info', text: `Загружено ${allFiles.length - errors}/${allFiles.length} файлов` })
 }
 
 async function connectSSH(ssh, log) {
@@ -494,18 +577,17 @@ ipcMain.handle('mods:install', async (event, { mods, gamePath, ssh, serverMode }
         log({ type: 'error', text: 'Путь к игре не указан — пропускаю BepInEx' })
       } else {
         try {
-          const pluginsDir = path.join(bepinex, 'plugins')
+          // Копируем весь BepInEx целиком → gamePath/BepInEx (сохраняет patchers, config, core и т.д.)
+          const destBepInEx = path.join(gamePath, 'BepInEx')
+          fse.copySync(bepinex, destBepInEx, { overwrite: true })
+          // Для реестра записываем конкретные папки плагинов
+          const pluginsDir = path.join(destBepInEx, 'plugins')
           if (fs.existsSync(pluginsDir)) {
             for (const entry of fs.readdirSync(pluginsDir)) {
-              const src = path.join(pluginsDir, entry)
-              const dest = path.join(gamePath, 'BepInEx', 'plugins', entry)
-              fse.copySync(src, dest, { overwrite: true })
-              installedPaths.push(dest)
+              installedPaths.push(path.join(pluginsDir, entry))
             }
           } else {
-            const dest = path.join(gamePath, 'BepInEx')
-            fse.copySync(bepinex, dest, { overwrite: true })
-            installedPaths.push(dest)
+            installedPaths.push(destBepInEx)
           }
           log({ type: 'success', text: `BepInEx установлен локально ✓` })
         } catch (err) {
@@ -529,7 +611,7 @@ ipcMain.handle('mods:install', async (event, { mods, gamePath, ssh, serverMode }
             const sep = isWinServer ? '\\' : '/'
             const remoteBepInEx = serverRoot + sep + 'BepInEx'
             await uploadDirSSH(sshConn, bepinex, remoteBepInEx, log)
-            // Записываем конкретные плагины залитые на сервер
+            // Для реестра — конкретные папки плагинов на сервере
             const pluginsDir = path.join(bepinex, 'plugins')
             if (fs.existsSync(pluginsDir)) {
               for (const entry of fs.readdirSync(pluginsDir)) {
@@ -639,6 +721,7 @@ ipcMain.handle('mods:install', async (event, { mods, gamePath, ssh, serverMode }
         name: modMeta?.name || name,
         version: modMeta?.version || null,
         slug: modMeta?.slug || null,
+        source: modMeta?.id ? 'forge' : 'manual',
         installedAt: new Date().toISOString(),
         paths: installedPaths
       }
