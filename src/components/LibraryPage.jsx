@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import './LibraryPage.css'
 
-export default function LibraryPage({ onRemoved, settings }) {
+export default function LibraryPage({ onRemoved, settings, activeProfile }) {
   const [mods, setMods] = useState([])
   const [loading, setLoading] = useState(true)
   const [removing, setRemoving] = useState({})
@@ -62,6 +62,7 @@ export default function LibraryPage({ onRemoved, settings }) {
         <div>
           <h1 className="page-title">Библиотека</h1>
           <p className="page-subtitle">
+            {activeProfile && <span className="lib-profile-badge">🎮 {activeProfile.name}</span>}
             {filtered.length} из {mods.length} модов
             {checking && <span className="ssh-checking"> · 🔌 Проверяю SSH...</span>}
           </p>

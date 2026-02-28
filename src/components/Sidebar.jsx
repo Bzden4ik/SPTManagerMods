@@ -24,7 +24,7 @@ const nav = [
   }
 ]
 
-export default function Sidebar({ page, setPage, queueCount }) {
+export default function Sidebar({ page, setPage, queueCount, activeProfile }) {
   return (
     <aside className="sidebar">
       <nav className="sidebar-nav">
@@ -36,7 +36,15 @@ export default function Sidebar({ page, setPage, queueCount }) {
           </button>
         ))}
       </nav>
-      <div className="sidebar-footer"><span className="version">v1.0.1</span></div>
+      <div className="sidebar-footer">
+        {activeProfile && (
+          <div className="sidebar-profile" title={activeProfile.gamePath || 'Путь не задан'}>
+            <span className="sidebar-profile-icon">🎮</span>
+            <span className="sidebar-profile-name">{activeProfile.name}</span>
+          </div>
+        )}
+        <span className="version">v1.0.1</span>
+      </div>
     </aside>
   )
 }

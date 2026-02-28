@@ -43,3 +43,17 @@
 .btn-danger { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.25); color: #f87171; padding: 7px 14px; border-radius: var(--radius); font-size: 13px; cursor: pointer; white-space: nowrap; transition: all 0.15s; flex-shrink: 0; }
 .btn-danger:hover { background: rgba(239,68,68,0.2); border-color: rgba(239,68,68,0.4); }
 .btn-danger:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.lib-profile-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--accent-glow);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 99px;
+  border: 1px solid rgba(232,160,48,0.25);
+  margin-right: 8px;
+}

@@ -46,9 +46,100 @@ process.on('unhandledRejection', (reason) => {
   console.warn('[UNHANDLED REJECTION]', reason)
 })
 
+// ─── Профили ───────────────────────────────────────────────────────────────
+function getProfilesFilePath() {
+  return path.join(app.getPath('userData'), 'profiles.json')
+}
+
+function loadProfilesData() {
+  try {
+    const p = getProfilesFilePath()
+    if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, 'utf8'))
+  } catch {}
+  return { active: null, list: [] }
+}
+
+function saveProfilesData(data) {
+  try { fs.writeFileSync(getProfilesFilePath(), JSON.stringify(data, null, 2), 'utf8') } catch {}
+}
+
+function ensureDefaultProfile() {
+  let data = loadProfilesData()
+  if (data.list.length > 0 && data.active) return data
+
+  const defaultId = 'profile_default'
+  // Мигрируем старый реестр если есть
+  const oldRegistry = path.join(app.getPath('userData'), 'installed_mods.json')
+  const newRegistry = path.join(app.getPath('userData'), `registry_${defaultId}.json`)
+  if (fs.existsSync(oldRegistry) && !fs.existsSync(newRegistry)) {
+    try { fs.renameSync(oldRegistry, newRegistry) } catch {}
+  }
+
+  if (data.list.length === 0) {
+    data.list.push({ id: defaultId, name: 'Default', gamePath: '', createdAt: new Date().toISOString() })
+  }
+  data.active = data.active || defaultId
+  saveProfilesData(data)
+  return data
+}
+
+ipcMain.handle('profiles:getAll', () => {
+  return ensureDefaultProfile()
+})
+
+ipcMain.handle('profiles:create', (_, { name, gamePath }) => {
+  const data = loadProfilesData()
+  const id = 'profile_' + Date.now()
+  data.list.push({ id, name: name || 'Новый профиль', gamePath: gamePath || '', createdAt: new Date().toISOString() })
+  saveProfilesData(data)
+  return { success: true, id, list: data.list, active: data.active }
+})
+
+ipcMain.handle('profiles:setActive', (_, { id }) => {
+  const data = loadProfilesData()
+  if (!data.list.find(p => p.id === id)) return { error: 'Профиль не найден' }
+  data.active = id
+  saveProfilesData(data)
+  const profile = data.list.find(p => p.id === id)
+  return { success: true, profile, list: data.list, active: id }
+})
+
+ipcMain.handle('profiles:rename', (_, { id, name }) => {
+  const data = loadProfilesData()
+  const p = data.list.find(p => p.id === id)
+  if (!p) return { error: 'Профиль не найден' }
+  p.name = name
+  saveProfilesData(data)
+  return { success: true, list: data.list }
+})
+
+ipcMain.handle('profiles:updateGamePath', (_, { id, gamePath }) => {
+  const data = loadProfilesData()
+  const p = data.list.find(p => p.id === id)
+  if (!p) return { error: 'Профиль не найден' }
+  p.gamePath = gamePath
+  saveProfilesData(data)
+  return { success: true }
+})
+
+ipcMain.handle('profiles:delete', (_, { id }) => {
+  const data = loadProfilesData()
+  if (data.list.length <= 1) return { error: 'Нельзя удалить последний профиль' }
+  data.list = data.list.filter(p => p.id !== id)
+  if (data.active === id) data.active = data.list[0].id
+  saveProfilesData(data)
+  try {
+    const rp = path.join(app.getPath('userData'), `registry_${id}.json`)
+    if (fs.existsSync(rp)) fs.unlinkSync(rp)
+  } catch {}
+  return { success: true, active: data.active, list: data.list }
+})
+
 // ─── Реестр установленных модов ────────────────────────────────────────────
 function getRegistryPath() {
-  return path.join(app.getPath('userData'), 'installed_mods.json')
+  const data = loadProfilesData()
+  const id = data.active || 'profile_default'
+  return path.join(app.getPath('userData'), `registry_${id}.json`)
 }
 
 function loadRegistry() {
@@ -273,7 +364,10 @@ function createWindow() {
   }
 }
 
-app.whenReady().then(createWindow)
+app.whenReady().then(() => {
+  ensureDefaultProfile()
+  createWindow()
+})
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()

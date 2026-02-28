@@ -31,4 +31,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   forgeClearCache: () => ipcRenderer.invoke('forge:clearCache'),
   onCacheProgress: (cb) => ipcRenderer.on('forge:cacheProgress', (_, d) => cb(d)),
   removeCacheProgress: () => ipcRenderer.removeAllListeners('forge:cacheProgress'),
+  // Profiles
+  profilesGetAll: () => ipcRenderer.invoke('profiles:getAll'),
+  profilesCreate: (p) => ipcRenderer.invoke('profiles:create', p),
+  profilesSetActive: (p) => ipcRenderer.invoke('profiles:setActive', p),
+  profilesRename: (p) => ipcRenderer.invoke('profiles:rename', p),
+  profilesUpdateGamePath: (p) => ipcRenderer.invoke('profiles:updateGamePath', p),
+  profilesDelete: (p) => ipcRenderer.invoke('profiles:delete', p),
 })

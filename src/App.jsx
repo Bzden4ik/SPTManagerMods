@@ -14,32 +14,52 @@ const saveState = (key, val) => { try { localStorage.setItem(key, JSON.stringify
 export default function App() {
   const [page, setPage] = useState('mods')
   const [queue, setQueue] = useState([])
-  const [installedMap, setInstalledMap] = useState({}) // { forge_ID: entry }
+  const [installedMap, setInstalledMap] = useState({})
 
-  const refreshInstalled = async () => {
-    const list = await window.electronAPI.getInstalledMods().catch(() => [])
-    const map = {}
-    list.forEach(e => { map[e.key] = e })
-    setInstalledMap(map)
+  // ─── Профили ───────────────────────────────────────────────────────────
+  const [profiles, setProfiles] = useState({ active: null, list: [] })
+
+  const loadProfiles = async () => {
+    const data = await window.electronAPI.profilesGetAll().catch(() => ({ active: null, list: [] }))
+    setProfiles(data)
+    // Синхронизируем gamePath из активного профиля
+    const activeProfile = data.list.find(p => p.id === data.active)
+    if (activeProfile) {
+      setSettings(prev => ({ ...prev, gamePath: activeProfile.gamePath || '' }))
+    }
+    return data
   }
 
-  useEffect(() => { refreshInstalled() }, [])
+  const switchProfile = async (id) => {
+    const res = await window.electronAPI.profilesSetActive({ id })
+    if (res.error) return
+    setProfiles({ active: id, list: res.list })
+    const profile = res.list.find(p => p.id === id)
+    if (profile) setSettings(prev => ({ ...prev, gamePath: profile.gamePath || '' }))
+    // Обновляем библиотеку для нового профиля
+    refreshInstalled()
+  }
+
+  useEffect(() => { loadProfiles() }, [])
+
+  // ─── Настройки ─────────────────────────────────────────────────────────
   const [settings, setSettings] = useState(() => loadState('settings', {
     gamePath: '',
     forgeToken: '',
     ssh: { host: '', port: '22', user: '', password: '', keyPath: '', authType: 'password', serverPath: '/root/SPT/' }
   }))
+
   const [browseFilters, setBrowseFilters] = useState(() => loadState('browseFilters', {
     search: '', selectedVersions: [], selectedCategory: '',
     featured: 'include', fikaOnly: false, sortBy: '-updated_at'
   }))
 
+  // Сохраняем только ssh и forgeToken в localStorage; gamePath берём из профиля
   useEffect(() => { saveState('settings', settings) }, [settings])
   useEffect(() => { saveState('browseFilters', browseFilters) }, [browseFilters])
 
   const [modpackState, setModpackState] = useState(() => {
     const saved = loadState('modpackState', null)
-    // Защита от старых/битых данных в localStorage
     if (!saved || !Array.isArray(saved.downloadItems)) {
       return { importKey: '', importedMods: null, downloadItems: [] }
     }
@@ -48,21 +68,44 @@ export default function App() {
 
   useEffect(() => { saveState('modpackState', modpackState) }, [modpackState])
 
+  // ─── Установленные моды ─────────────────────────────────────────────────
+  const refreshInstalled = async () => {
+    const list = await window.electronAPI.getInstalledMods().catch(() => [])
+    const map = {}
+    list.forEach(e => { map[e.key] = e })
+    setInstalledMap(map)
+  }
+
+  useEffect(() => { refreshInstalled() }, [])
+
   const addToQueue = (mods) => {
     setQueue(prev => [...prev, ...mods])
     setPage('mods')
   }
+
+  // Активный профиль
+  const activeProfile = profiles.list.find(p => p.id === profiles.active) || null
+
   return (
     <div className="app">
       <TitleBar />
       <div className="app-body">
-        <Sidebar page={page} setPage={setPage} queueCount={queue.length} />
+        <Sidebar page={page} setPage={setPage} queueCount={queue.length} activeProfile={activeProfile} />
         <main className="app-content">
           {page === 'mods' && <ModsPage settings={settings} externalQueue={queue} clearExternalQueue={() => setQueue([])} onInstallDone={refreshInstalled} />}
           {page === 'browse' && <BrowsePage settings={settings} onAddToQueue={addToQueue} filters={browseFilters} setFilters={setBrowseFilters} installedMap={installedMap} />}
-          {page === 'library' && <LibraryPage settings={settings} onRemoved={refreshInstalled} />}
+          {page === 'library' && <LibraryPage settings={settings} onRemoved={refreshInstalled} activeProfile={activeProfile} />}
           {page === 'modpack' && <ModpackPage settings={settings} onAddToQueue={addToQueue} modpackState={modpackState} setModpackState={setModpackState} />}
-          {page === 'settings' && <SettingsPage settings={settings} setSettings={setSettings} />}
+          {page === 'settings' && (
+            <SettingsPage
+              settings={settings}
+              setSettings={setSettings}
+              profiles={profiles}
+              setProfiles={setProfiles}
+              onSwitchProfile={switchProfile}
+              onProfilesReload={loadProfiles}
+            />
+          )}
         </main>
       </div>
     </div>
