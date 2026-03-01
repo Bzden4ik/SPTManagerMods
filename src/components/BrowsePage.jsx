@@ -306,7 +306,7 @@ export default function BrowsePage({ settings, onAddToQueue, filters, setFilters
         <div className="browse-loading"><span className="spinner" />Загружаю...</div>
       ) : (
         <div className="browse-grid">
-          {mods.map(mod => {
+          {mods.map((mod, index) => {
             const isExpanded = expandedMod?.id === mod.id
             const versions = modVersions[mod.id] || []
             const dlKey = Object.keys(downloading).find(k => k.startsWith(mod.slug || String(mod.id)))
@@ -315,7 +315,7 @@ export default function BrowsePage({ settings, onAddToQueue, filters, setFilters
             const isInstalled = installedEntry?.isPresent
 
             return (
-              <div key={mod.id} className={`mod-card ${isExpanded ? 'expanded' : ''}`}>
+              <div key={mod.id} className={`mod-card ${isExpanded ? 'expanded' : ''}`} style={{ animationDelay: `${index * 0.03}s` }}>
                 <div className="mod-card-main" onClick={() => expandMod(mod)}>
                   {mod.thumbnail
                     ? <img className="mod-thumb" src={mod.thumbnail} alt="" onError={e => { e.target.style.display = 'none' }} />

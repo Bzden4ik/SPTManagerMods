@@ -92,20 +92,11 @@ export default function App() {
       <div className="app-body">
         <Sidebar page={page} setPage={setPage} queueCount={queue.length} activeProfile={activeProfile} />
         <main className="app-content">
-          {page === 'mods' && <ModsPage settings={settings} externalQueue={queue} clearExternalQueue={() => setQueue([])} onInstallDone={refreshInstalled} />}
-          {page === 'browse' && <BrowsePage settings={settings} onAddToQueue={addToQueue} filters={browseFilters} setFilters={setBrowseFilters} installedMap={installedMap} />}
-          {page === 'library' && <LibraryPage settings={settings} onRemoved={refreshInstalled} activeProfile={activeProfile} />}
-          {page === 'modpack' && <ModpackPage settings={settings} onAddToQueue={addToQueue} modpackState={modpackState} setModpackState={setModpackState} />}
-          {page === 'settings' && (
-            <SettingsPage
-              settings={settings}
-              setSettings={setSettings}
-              profiles={profiles}
-              setProfiles={setProfiles}
-              onSwitchProfile={switchProfile}
-              onProfilesReload={loadProfiles}
-            />
-          )}
+          {page === 'mods'     && <div key="mods"     className="page-enter"><ModsPage settings={settings} externalQueue={queue} clearExternalQueue={() => setQueue([])} onInstallDone={refreshInstalled} /></div>}
+          {page === 'browse'   && <div key="browse"   className="page-enter"><BrowsePage settings={settings} onAddToQueue={addToQueue} filters={browseFilters} setFilters={setBrowseFilters} installedMap={installedMap} /></div>}
+          {page === 'library'  && <div key="library"  className="page-enter"><LibraryPage settings={settings} onRemoved={refreshInstalled} activeProfile={activeProfile} /></div>}
+          {page === 'modpack'  && <div key="modpack"  className="page-enter"><ModpackPage settings={settings} onAddToQueue={addToQueue} modpackState={modpackState} setModpackState={setModpackState} /></div>}
+          {page === 'settings' && <div key="settings" className="page-enter"><SettingsPage settings={settings} setSettings={setSettings} profiles={profiles} setProfiles={setProfiles} onSwitchProfile={switchProfile} onProfilesReload={loadProfiles} /></div>}
         </main>
       </div>
     </div>
