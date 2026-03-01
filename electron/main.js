@@ -357,6 +357,9 @@ function createWindow() {
     }
   })
 
+  // Блокируем навигацию при дропе файлов — иначе Electron открывает файл вместо дропа
+  win.webContents.on('will-navigate', (e) => e.preventDefault())
+
   if (isDev) {
     win.loadURL('http://localhost:5173')
   } else {
@@ -671,18 +674,35 @@ ipcMain.handle('mods:install', async (event, { mods, gamePath, ssh, serverMode }
         log({ type: 'error', text: 'Путь к игре не указан — пропускаю BepInEx' })
       } else {
         try {
-          // Копируем весь BepInEx целиком → gamePath/BepInEx (сохраняет patchers, config, core и т.д.)
           const destBepInEx = path.join(gamePath, 'BepInEx')
-          fse.copySync(bepinex, destBepInEx, { overwrite: true })
-          // Для реестра записываем конкретные папки плагинов
-          const pluginsDir = path.join(destBepInEx, 'plugins')
-          if (fs.existsSync(pluginsDir)) {
-            for (const entry of fs.readdirSync(pluginsDir)) {
-              installedPaths.push(path.join(pluginsDir, entry))
-            }
-          } else {
-            installedPaths.push(destBepInEx)
+          // Подпапки BepInEx которые могут содержать файлы мода
+          const bepinexSubDirs = ['plugins', 'patchers', 'config', 'core']
+          // Snapshot КАЖДОЙ подпапки ДО копирования
+          const snapshotBefore = {}
+          for (const sub of bepinexSubDirs) {
+            const dir = path.join(destBepInEx, sub)
+            snapshotBefore[sub] = new Set(fs.existsSync(dir) ? fs.readdirSync(dir) : [])
           }
+          fse.copySync(bepinex, destBepInEx, { overwrite: true })
+          // Для каждой подпапки — diff: новые записи ИЛИ то что было в архиве
+          let trackedAny = false
+          for (const sub of bepinexSubDirs) {
+            const destDir = path.join(destBepInEx, sub)
+            const srcDir = path.join(bepinex, sub)
+            if (!fs.existsSync(destDir)) continue
+            const afterEntries = fs.readdirSync(destDir)
+            const newEntries = afterEntries.filter(e => !snapshotBefore[sub].has(e))
+            if (newEntries.length > 0) {
+              // Новые файлы/папки — точно этого мода
+              for (const entry of newEntries) installedPaths.push(path.join(destDir, entry))
+              trackedAny = true
+            } else if (fs.existsSync(srcDir)) {
+              // Обновление существующих — берём список из архива
+              for (const entry of fs.readdirSync(srcDir)) installedPaths.push(path.join(destDir, entry))
+              trackedAny = true
+            }
+          }
+          if (!trackedAny) installedPaths.push(destBepInEx)
           log({ type: 'success', text: `BepInEx установлен локально ✓` })
         } catch (err) {
           log({ type: 'error', text: `Ошибка копирования BepInEx: ${err.message}` })
@@ -705,15 +725,18 @@ ipcMain.handle('mods:install', async (event, { mods, gamePath, ssh, serverMode }
             const sep = isWinServer ? '\\' : '/'
             const remoteBepInEx = serverRoot + sep + 'BepInEx'
             await uploadDirSSH(sshConn, bepinex, remoteBepInEx, log)
-            // Для реестра — конкретные папки плагинов на сервере
-            const pluginsDir = path.join(bepinex, 'plugins')
-            if (fs.existsSync(pluginsDir)) {
-              for (const entry of fs.readdirSync(pluginsDir)) {
-                installedPaths.push(`ssh:${ssh.user}@${ssh.host}:${remoteBepInEx}${sep}plugins${sep}${entry}`)
+            // Трекаем все подпапки BepInEx из архива: plugins, patchers, config, core
+            const bepinexSubDirs = ['plugins', 'patchers', 'config', 'core']
+            let trackedSsh = false
+            for (const sub of bepinexSubDirs) {
+              const srcDir = path.join(bepinex, sub)
+              if (!fs.existsSync(srcDir)) continue
+              for (const entry of fs.readdirSync(srcDir)) {
+                installedPaths.push(`ssh:${ssh.user}@${ssh.host}:${remoteBepInEx}${sep}${sub}${sep}${entry}`)
               }
-            } else {
-              installedPaths.push(`ssh:${ssh.user}@${ssh.host}:${remoteBepInEx}`)
+              trackedSsh = true
             }
+            if (!trackedSsh) installedPaths.push(`ssh:${ssh.user}@${ssh.host}:${remoteBepInEx}`)
             log({ type: 'success', text: `BepInEx залит на сервер ✓` })
           } catch (err) {
             log({ type: 'error', text: `SSH ошибка (BepInEx): ${err.message}` })
@@ -739,12 +762,24 @@ ipcMain.handle('mods:install', async (event, { mods, gamePath, ssh, serverMode }
           try {
             const dest = path.join(gamePath, 'SPT')
             log({ type: 'info', text: `Копирую SPT → ${dest}` })
-            fse.copySync(sptDir, dest, { overwrite: true })
-            // Записываем конкретные папки модов
+            // Snapshot mods/ ДО копирования
             const modsDir = path.join(gamePath, 'SPT', 'user', 'mods')
+            const modsBefore = new Set(fs.existsSync(modsDir) ? fs.readdirSync(modsDir) : [])
+            fse.copySync(sptDir, dest, { overwrite: true })
+            // Записываем только НОВЫЕ папки модов (diff)
             if (fs.existsSync(modsDir)) {
-              for (const modFolder of fs.readdirSync(modsDir)) {
-                installedPaths.push(path.join(modsDir, modFolder))
+              const modsAfter = fs.readdirSync(modsDir)
+              const newMods = modsAfter.filter(e => !modsBefore.has(e))
+              if (newMods.length > 0) {
+                for (const modFolder of newMods) installedPaths.push(path.join(modsDir, modFolder))
+              } else {
+                // Обновление — читаем из архива что было скопировано
+                const srcMods = path.join(sptDir, 'user', 'mods')
+                if (fs.existsSync(srcMods)) {
+                  for (const modFolder of fs.readdirSync(srcMods)) installedPaths.push(path.join(modsDir, modFolder))
+                } else {
+                  installedPaths.push(dest)
+                }
               }
             } else {
               installedPaths.push(dest)

@@ -41,6 +41,30 @@ export default function ModsPage({ settings, externalQueue = [], clearExternalQu
     setMods(prev => [...prev, ...newMods])
   }
 
+  const [isDragging, setIsDragging] = useState(false)
+
+  const handleDrop = (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(false)
+    const files = Array.from(e.dataTransfer.files)
+    const archives = files.filter(f => /\.(zip|7z|rar)$/i.test(f.name))
+    if (!archives.length) return
+    const newMods = archives.map(f => ({
+      path: f.path,
+      name: f.name,
+      type: 'unknown',
+      status: 'pending'
+    }))
+    setMods(prev => {
+      const existingPaths = new Set(prev.map(m => m.path))
+      return [...prev, ...newMods.filter(m => !existingPaths.has(m.path))]
+    })
+  }
+
+  const handleDragOver = (e) => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'copy'; setIsDragging(true) }
+  const handleDragLeave = (e) => { e.preventDefault(); setIsDragging(false) }
+
   const removeMod = (idx) => {
     const mod = mods[idx]
     // Удаляем файл из temp если он оттуда
@@ -149,11 +173,16 @@ export default function ModsPage({ settings, externalQueue = [], clearExternalQu
         </span>
       </div>
 
-      <div className="mods-list-wrap">
+      <div
+        className={`mods-list-wrap ${isDragging ? 'dragging' : ''}`}
+        onDrop={handleDrop}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+      >
         {mods.length === 0 ? (
           <div className="empty-state" onClick={addMods}>
-            <div className="empty-icon">📦</div>
-            <p>Нажми чтобы добавить архивы с модами</p>
+            <div className="empty-icon">{isDragging ? '📂' : '📦'}</div>
+            <p>{isDragging ? 'Отпусти чтобы добавить' : 'Нажми или перетащи архивы с модами'}</p>
             <span>Поддерживаются .zip .7z .rar</span>
           </div>
         ) : (
